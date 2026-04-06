@@ -16,12 +16,13 @@ MEG_ChatBot/
 │   ├── converted_csv/                  # Excel → CSV 변환 결과
 │   ├── error/                          # 단계별 에러 로그 (error_log_*.txt)
 │   └── result/
-│       ├── preprocessed_data_semi.xlsx   # 1차 추출 결과
-│       ├── preprocessed_data_final.xlsx  # 2차 정제 완료 결과
+│       ├── preprocessed_data_semi.xlsx   # 1차 추출 결과 (No, Title, Item, Guide, Reason)
+│       ├── preprocessed_data_final.xlsx  # 2차 정제 결과 (Title, Item, Guide, Reason)
 │       └── final_text_data_*.xlsx        # LLM 마크다운 변환 결과 (500행 단위 청크)
 │
 └── src/
-    ├── chatbot_meg.py      # 메인 Streamlit 앱 + RAG 챗봇 엔진
+    ├── chatbot_meg.py      # Streamlit UI 전담 (인증, 화면 렌더링)
+    ├── rag_engine.py       # RAG 엔진 전담 (벡터DB, 검색, LLM 답변) — 터미널 테스트 가능
     ├── preprocess_meg.py   # 원본 Excel → 정제 데이터 전처리 (Windows 전용)
     └── table_parser.py     # 정제 데이터 → LLM 마크다운 텍스트 변환
 ```
@@ -34,19 +35,21 @@ MEG_ChatBot/
 [원본 Excel 체크리스트] (data/raw_data/)
         ↓  preprocess_meg.py (1단계)
   Excel → win32com → CSV 변환 (data/converted_csv/)
-  NO / ITEM / GUIDE 컬럼 추출
+  No / Title / Item / Guide / Reason 컬럼 추출
         ↓
-  preprocessed_data_semi.xlsx  (data/result/, 1차 중간 저장)
+  preprocessed_data_semi.xlsx  (data/result/)
+  컬럼: No, Title, Item, Guide, Reason
         ↓  preprocess_meg.py (2단계)
-  Title 컬럼 정제 (숫자 인덱스·특수문자 제거)
+  Title 컬럼 정제 (숫자 인덱스·특수문자 제거) + No 컬럼 제외
         ↓
   preprocessed_data_final.xlsx  (data/result/)
+  컬럼: Title(정제됨), Item, Guide, Reason
         ↓  table_parser.py
   Ollama gemma2 LLM으로 마크다운 서술형 텍스트 변환
   (500행 단위 청크 분할 저장)
         ↓
   final_text_data_1.xlsx, final_text_data_2.xlsx, ... (data/result/)
-        ↓  chatbot_meg.py (앱 구동 시)
+        ↓  rag_engine.py / chatbot_meg.py (앱 구동 시)
   OllamaEmbeddings → ChromaDB 벡터 인덱싱
         ↓
   RAG 검색 + gemma2 LLM 답변 생성
@@ -56,17 +59,27 @@ MEG_ChatBot/
 
 ## 각 파일 상세
 
-### `src/chatbot_meg.py`
+### `src/chatbot_meg.py` — UI 전담
 
-- **UI**: Streamlit (`st.set_page_config`, `st.chat_input` 등)
+- **역할**: Streamlit UI만 담당. RAG 로직은 `rag_engine.py`에서 import
 - **인증**: `check_password()` — 세션 기반 비밀번호 인증
-- **지식베이스**: `prepare_knowledge_base(file_pattern)` — `@st.cache_resource`로 캐싱, `data/result/final_text_data_*.xlsx` 로드
-- **RAG 엔진**: `setup_design_bot(vector_db)` — ChromaDB retriever + gemma2 LLM
-  - `search_type="similarity_score_threshold"`, `k=10`, `score_threshold=0.3`
-  - `similarity_search_with_relevance_scores`로 2차 필터링 (`score > 0.2`)
-  - 결과 없을 시 상위 1개 강제 포함 (유사 답변 유도)
-- **Query Expansion**: `expand_query(query, llm)` — 방향어(상/하/좌/우/전/후), 단위, 유의어 보강
-- **Ollama 상태 확인**: `check_ollama()` — `http://localhost:11434` 헬스체크
+- **지식베이스 캐싱**: `load_knowledge_base(file_pattern)` — `@st.cache_resource`로 캐싱
+  - `prepare_knowledge_base()` + `setup_design_bot()`을 묶어서 Streamlit 캐시 적용
+- **실행**: `streamlit run src/chatbot_meg.py`
+
+---
+
+### `src/rag_engine.py` — RAG 엔진 전담
+
+- **역할**: Streamlit 의존성 없음. 독립 실행 및 터미널 테스트 가능
+- **`check_ollama()`**: `http://localhost:11434` 헬스체크
+- **`prepare_knowledge_base(file_pattern)`**: `data/result/final_text_data_*.xlsx` 로드 → ChromaDB 구축
+  - 컬렉션명: `design_bot_final_v8`
+- **`expand_query(query, llm)`**: 방향어(상/하/좌/우/전/후), 단위, 유의어 보강
+- **`setup_design_bot(vector_db)`**: RAG 핸들러 함수 반환
+  - `similarity_search_with_relevance_scores` (k=10)
+  - score > 0.2 필터링, 미달 시 상위 1개 강제 포함
+- **터미널 테스트**: `python src/rag_engine.py` → 대화형 질의응답 루프 실행
 
 **LLM 프롬프트 답변 규칙**
 1. 밀접한 데이터 → "확인된 설계 표준 가이드는 다음과 같습니다."
@@ -77,27 +90,28 @@ MEG_ChatBot/
 
 ---
 
-### `src/preprocess_meg.py`
+### `src/preprocess_meg.py` — 데이터 전처리 (Windows 전용)
 
 - **플랫폼**: Windows 전용 (`win32com.client` 사용)
-- **경로 기준**: `src/preprocess_meg.py` 위치에서 상위 폴더(`project_root`)의 `data/` 사용
+- **경로 기준**: `src/preprocess_meg.py` 위치 기준 상위 폴더의 `data/` 사용
 - **`convert_all_excel_to_csv(data_root)`**: `data/raw_data/` 하위 모든 `.xlsx`를 COM 자동화로 CSV 변환
   - 파일명에 `[`, `]` 포함 시 `converted_csv/`에 괄호 제거한 이름으로 복사 후 처리, 완료 후 삭제
   - CSV 경로 길이 218자 초과 시 스킵 (`MAX_CSV_PATH_LENGTH` 상수)
   - Excel 초기화 실패 시 최대 3회 재시도
   - 실패 파일 목록 → `data/error/error_log_excel_to_csv_*.txt`
-- **`process_and_save_checklists(data_root, csv_folder)`**: CSV에서 헤더 행(`NO`, `ITEM`, `GUIDE` 포함) 탐색 후 데이터 추출
-  - `NO` 컬럼이 단일 알파벳(`A`~`Z`)인 행만 유효 데이터로 처리 (`continue`로 빈 행 허용)
+- **`process_and_save_checklists(data_root, csv_folder)`**: CSV에서 헤더 행 탐색 후 데이터 추출
+  - `NO` 컬럼이 단일 알파벳(`A`~`Z`)인 행만 유효 데이터 (`continue`로 빈 행 허용)
   - ITEM 다중 컬럼 병합, GUIDE 다중 컬럼 병합 (콤마 구분)
   - `FIGURE` 컬럼 이전까지만 GUIDE로 인식
+  - **출력 컬럼**: `No, Title, Item, Guide, Reason` → `preprocessed_data_semi.xlsx`
   - 실패 파일 목록 → `data/error/error_log_extract_checklists_*.txt`
-- **`run_2nd_preprocessing(data_root, input_file_name)`**: Title 컬럼 정제
-  - 앞 숫자 인덱스 제거 (`re.sub(r'^[0-9\s.\-_]+'...`)
-  - 괄호·특수기호 → 공백 치환
+- **`run_2nd_preprocessing(data_root, input_file_name)`**: Title 컬럼 정제 후 final 저장
+  - 앞 숫자 인덱스 제거, 괄호·특수기호 → 공백 치환
+  - **출력 컬럼**: `Title(정제됨), Item, Guide, Reason` → `preprocessed_data_final.xlsx` (No 제외)
 
 ---
 
-### `src/table_parser.py`
+### `src/table_parser.py` — LLM 마크다운 변환
 
 - **입력**: `data/result/preprocessed_data_final.xlsx` (Title, Item, Guide, Reason 컬럼)
 - **출력**: `data/result/final_text_data_{n}.xlsx` (Text 컬럼, 500행 단위 청크)
@@ -109,7 +123,7 @@ MEG_ChatBot/
   ## 설계 표준 가이드
   (서술형 내용...)
   ```
-- LLM 호출 실패 시 원본 Guide 텍스트로 폴백
+- LLM 호출 실패 시 원본 Guide 텍스트로 폴백 + 에러 출력
 - `Reason` 컬럼은 현재 미사용 (향후 보강 예정)
 
 ---
@@ -125,15 +139,15 @@ MEG_ChatBot/
 
 ### 플랫폼 의존성
 - `preprocess_meg.py`는 `win32com` 사용으로 **Windows에서만 실행 가능**
-- `chatbot_meg.py`와 `table_parser.py`는 크로스플랫폼 동작
+- 나머지 파일은 크로스플랫폼 동작
 
 ### LLM / Ollama
 - 로컬에 Ollama 서버가 `http://localhost:11434`에서 실행 중이어야 함
-- 사용 모델: `gemma2` (임베딩 + 생성 모두 동일 모델 사용)
-- `chatbot_meg.py`의 `collection_name="design_bot_final_v8"` — 버전 변경 시 컬렉션명 업데이트 필요
+- 사용 모델: `gemma2` (임베딩 + 생성 모두 동일 모델)
+- `collection_name="design_bot_final_v8"` — 버전 변경 시 컬렉션명 업데이트 필요
 
 ### 데이터 파일
-- `data/result/final_text_data_*.xlsx` 파일이 없으면 앱이 에러를 표시하고 종료
+- `data/result/final_text_data_*.xlsx` 파일이 없으면 앱 에러 후 종료
 
 ---
 
@@ -148,7 +162,12 @@ python src/preprocess_meg.py
 python src/table_parser.py
 ```
 
-### 2. 챗봇 앱 실행
+### 2. RAG 성능 터미널 테스트
+```bash
+python src/rag_engine.py
+```
+
+### 3. 챗봇 앱 실행
 ```bash
 streamlit run src/chatbot_meg.py
 ```
@@ -158,5 +177,5 @@ streamlit run src/chatbot_meg.py
 ## 향후 개선 예정 사항
 
 - `Reason` 컬럼 데이터 보강 후 프롬프트에 설계 근거 포함
-- 비밀번호 하드코딩 제거
+- 비밀번호 하드코딩 제거 (환경변수 적용)
 - `preprocess_meg.py` Linux/Mac 호환 버전 작성 (win32com 제거)

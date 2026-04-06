@@ -50,9 +50,11 @@ def save_error_log(error_folder, step_name, failed_files):
 def run_2nd_preprocessing(data_root, input_file_name):
     """
     1차 저장된 semi 파일을 불러와 Title을 정제하고 final 결과물로 저장
+    - 입력 컬럼: No, Title, Item, Guide, Reason
+    - 출력 컬럼: Title(정제됨), Item, Guide, Reason  (No 컬럼 제외)
     """
-    input_path  = os.path.join(data_root, 'result', input_file_name)
-    output_path = os.path.join(data_root, 'result', 'preprocessed_data_final.xlsx')
+    input_path   = os.path.join(data_root, 'result', input_file_name)
+    output_path  = os.path.join(data_root, 'result', 'preprocessed_data_final.xlsx')
     error_folder = os.path.join(data_root, 'error')
 
     if not os.path.exists(input_path):
@@ -67,11 +69,13 @@ def run_2nd_preprocessing(data_root, input_file_name):
         save_error_log(error_folder, "2nd_preprocess", ["'Title' 컬럼 없음"])
         return
 
+    # Title 정제
     df['Title'] = df['Title'].apply(clean_title_logic)
     print("Title 컬럼 정제가 완료되었습니다.")
 
     try:
-        df.to_excel(output_path, index=False, engine='openpyxl')
+        # final에는 No 컬럼 제외하고 저장
+        df[["Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
         print(f"최종 전처리 완료. 저장 위치: {output_path}")
     except Exception as e:
         print(f"파일 저장 중 오류 발생: {e}")
@@ -273,9 +277,10 @@ def process_and_save_checklists(data_root, csv_folder):
 
                 if full_guide:
                     all_extracted_data.append({
-                        "Title": csv_file.replace('.csv', ''),
-                        "Item": full_item_text,
-                        "Guide": full_guide,
+                        "No":     no_val,
+                        "Title":  csv_file.replace('.csv', ''),
+                        "Item":   full_item_text,
+                        "Guide":  full_guide,
                         "Reason": ""
                     })
 
@@ -296,7 +301,8 @@ def process_and_save_checklists(data_root, csv_folder):
     os.makedirs(result_folder, exist_ok=True)
 
     output_path = os.path.join(result_folder, semi_file_name)
-    result_df[["Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
+    # semi: No 컬럼 포함하여 저장
+    result_df[["No", "Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
     print(f"1차 중간 데이터 저장 완료: {output_path} (총 {len(result_df)}행)")
     return semi_file_name
 
@@ -321,9 +327,9 @@ if __name__ == "__main__":
     # 1단계: Excel → CSV 변환
     target_csv_folder = convert_all_excel_to_csv(data_root)
 
-    # 2단계: CSV 데이터 추출 및 1차 저장 (semi)
+    # 2단계: CSV 데이터 추출 및 1차 저장 (semi) — 컬럼: No, Title, Item, Guide, Reason
     semi_file = process_and_save_checklists(data_root, target_csv_folder)
 
-    # 3단계: Title 정제 및 최종 저장 (final)
+    # 3단계: Title 정제 및 최종 저장 (final) — 컬럼: Title(정제됨), Item, Guide, Reason
     if semi_file:
         run_2nd_preprocessing(data_root, semi_file)
