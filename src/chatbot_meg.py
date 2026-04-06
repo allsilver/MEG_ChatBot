@@ -1,7 +1,8 @@
 import os
 import glob
 import streamlit as st
-from rag_engine import check_ollama, prepare_knowledge_base, setup_design_bot
+from vector_store import load_vector_db
+from rag_engine import check_ollama, setup_design_bot
 
 # UI 설정
 st.set_page_config(page_title="AI 설계 어시스턴트 챗봇", layout="wide")
@@ -25,10 +26,10 @@ def check_password():
     return False
 
 
-# [지식 베이스] @st.cache_resource는 Streamlit 의존성이므로 UI 파일에서 관리
+# [지식 베이스] ChromaDB 로드만 수행 (구축 없음)
 @st.cache_resource
-def load_knowledge_base(file_pattern):
-    db = prepare_knowledge_base(file_pattern)
+def load_knowledge_base():
+    db = load_vector_db()
     return setup_design_bot(db)
 
 
@@ -47,8 +48,8 @@ if check_password():
         st.warning("⚠️ 서버의 AI 엔진(Ollama)이 실행되고 있지 않습니다.")
         st.stop()
 
-    current_dir  = os.path.dirname(os.path.abspath(__file__))  # MEG_ChatBot/src/
-    project_root = os.path.dirname(current_dir)                 # MEG_ChatBot/
+    current_dir  = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
     data_pattern = os.path.join(project_root, 'data', 'result', 'final_text_data_*.xlsx')
 
     if not glob.glob(data_pattern):
@@ -56,8 +57,12 @@ if check_password():
         st.stop()
 
     if "bot" not in st.session_state:
-        with st.spinner("지식 베이스 구축 중..."):
-            st.session_state.bot = load_knowledge_base(data_pattern)
+        with st.spinner("지식 베이스 로드 중..."):
+            try:
+                st.session_state.bot = load_knowledge_base()
+            except FileNotFoundError as e:
+                st.error(f"❌ {e}")
+                st.stop()
 
     if "messages" not in st.session_state:
         st.session_state.messages = []

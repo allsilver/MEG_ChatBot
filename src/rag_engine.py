@@ -1,12 +1,14 @@
-import os
-import glob
-import pandas as pd
 import requests
-from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+# ============ 생성 모델 설정 (여기만 변경) ============
+GENERATOR_MODEL = "qwen3:8b"
+# GENERATOR_MODEL = "gemma2"
+# GENERATOR_MODEL = "gemma4:e4b"
+# GENERATOR_MODEL = "qwen3:14b"
+# =====================================================
 
 
 def check_ollama():
@@ -18,59 +20,12 @@ def check_ollama():
         return False
 
 
-def prepare_knowledge_base(file_pattern):
-    """
-    final_text_data_*.xlsx 파일을 읽어 ChromaDB 벡터 DB 구축
-    @st.cache_resource는 Streamlit 의존성이므로 chatbot_meg.py에서 감싸서 적용
-    """
-    all_files = glob.glob(file_pattern)
-    if not all_files:
-        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_pattern}")
-
-    combined_df = pd.concat(
-        [pd.read_excel(f, engine='openpyxl') for f in all_files],
-        ignore_index=True
-    )
-
-    documents = []
-    for _, row in combined_df.iterrows():
-        if pd.notna(row['Text']):
-            documents.append(Document(page_content=str(row['Text']).strip()))
-
-    print(f"총 {len(documents)}개의 문서를 로드했습니다.")
-
-    embeddings = OllamaEmbeddings(model="gemma2")
-    vector_db  = Chroma.from_documents(
-        documents=documents,
-        embedding=embeddings,
-        collection_name="design_bot_final_v8"
-    )
-    return vector_db
-
-
-def expand_query(query, llm):
-    """방향어(상/하/좌/우) 등 유의어를 추가하여 검색 범위 확장"""
-    expansion_template = """
-    너는 기구 설계 전문가야. 사용자의 질문을 분석하여 검색에 도움이 될 단어들을 추가해줘.
-    특히 방향(상/하/좌/우/전/후), 단위, 부품 명칭의 유의어를 포함하라.
-    결과는 콤마(,)로 구분된 단어들만 출력해.
-
-    사용자 질문: {query}
-    결과:"""
-    prompt = ChatPromptTemplate.from_template(expansion_template)
-    chain  = prompt | llm | StrOutputParser()
-    try:
-        expanded_terms = chain.invoke({"query": query})
-        return f"{query}, {expanded_terms}"
-    except Exception:
-        return query
-
-
 def setup_design_bot(vector_db):
     """RAG 챗봇 핸들러 함수 반환"""
-    llm = OllamaLLM(model="gemma2", temperature=0.1)
+    llm = OllamaLLM(model=GENERATOR_MODEL, temperature=0.1)
 
-    template = """너는 숙련된 기구 설계 시니어 엔지니어로서 후배에게 설계 표준을 설명해주는 전문가야.
+    template = """/no_think
+너는 숙련된 기구 설계 시니어 엔지니어로서 후배에게 설계 표준을 설명해주는 전문가야.
 제공된 [참조 데이터]를 바탕으로 질문에 답변하되, 아래 규칙을 반드시 지켜라.
 
 [작성 규칙]
@@ -91,13 +46,10 @@ def setup_design_bot(vector_db):
     prompt = ChatPromptTemplate.from_template(template)
 
     def rag_handler(query):
-        # 1. 쿼리 확장
-        expanded_q = expand_query(query, llm)
+        # 유사도 점수 포함 문서 검색 (k=10으로 넓게 탐색)
+        docs_with_scores = vector_db.similarity_search_with_relevance_scores(query, k=10)
 
-        # 2. 유사도 점수 포함 문서 검색 (k=10으로 넓게 탐색)
-        docs_with_scores = vector_db.similarity_search_with_relevance_scores(expanded_q, k=10)
-
-        # 3. 임계치(0.2) 이상인 문서만 사용
+        # 임계치(0.2) 이상인 문서만 사용
         valid_docs = [doc for doc, score in docs_with_scores if score > 0.2]
 
         # 점수 미달이어도 상위 1개는 강제 포함하여 유사 답변 유도
@@ -115,9 +67,13 @@ def setup_design_bot(vector_db):
 
 # --- 터미널 테스트 모드 ---
 if __name__ == "__main__":
-    current_dir  = os.path.dirname(os.path.abspath(__file__))  # MEG_ChatBot/src/
-    project_root = os.path.dirname(current_dir)                 # MEG_ChatBot/
-    data_pattern = os.path.join(project_root, 'data', 'result', 'final_text_data_*.xlsx')
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from vector_store import load_vector_db
+
+    current_dir  = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
 
     print("Ollama 연결 확인 중...")
     if not check_ollama():
@@ -125,9 +81,9 @@ if __name__ == "__main__":
         exit(1)
     print("✅ Ollama 연결 확인")
 
-    print(f"\n지식 베이스 구축 중...")
+    print("\n지식 베이스 로드 중...")
     try:
-        vector_db = prepare_knowledge_base(data_pattern)
+        vector_db = load_vector_db()
     except FileNotFoundError as e:
         print(f"❌ {e}")
         exit(1)

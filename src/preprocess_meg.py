@@ -6,6 +6,7 @@ import time
 import shutil
 from datetime import datetime
 
+
 # Windows 경로 최대 길이 제한 (win32com 안정성 기준)
 MAX_CSV_PATH_LENGTH = 218
 
@@ -24,8 +25,21 @@ def clean_title_logic(text):
     # 1. 맨 앞의 숫자 인덱스 및 기호 제거
     text = re.sub(r'^[0-9\s.\-_]+', '', text)
 
-    # 2. 괄호 제거 및 특수기호(_, -)를 공백으로 치환
+    # 2. 예외 키워드 보호 (정제 전 임시 치환)
+    PROTECT_KEYWORDS = ['2.5D', '3D', '2D']  # 긴 것부터 먼저 처리
+    placeholders = {}
+    for i, kw in enumerate(PROTECT_KEYWORDS):
+        placeholder = f'__PROTECTED_{i}__'
+        if kw in text:
+            placeholders[placeholder] = kw
+            text = text.replace(kw, placeholder)
+
+    # 괄호 제거 및 특수기호(_, -)를 공백으로 치환
     text = text.replace('(', ' ').replace(')', ' ').replace('_', ' ').replace('-', ' ')
+
+    # 보호했던 키워드 복원
+    for placeholder, kw in placeholders.items():
+        text = text.replace(placeholder, kw)
 
     # 3. 연속된 공백을 하나로 합치고 앞뒤 공백 제거
     text = re.sub(r'\s+', ' ', text).strip()
@@ -71,7 +85,7 @@ def run_2nd_preprocessing(data_root, input_file_name):
     print("Title 컬럼 정제가 완료되었습니다.")
 
     try:
-        df.to_excel(output_path, index=False, engine='openpyxl')
+        df[["Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
         print(f"최종 전처리 완료. 저장 위치: {output_path}")
     except Exception as e:
         print(f"파일 저장 중 오류 발생: {e}")
@@ -104,9 +118,15 @@ def convert_all_excel_to_csv(data_root):
 
     # raw_data 하위 폴더 포함 모든 xlsx 파일 수집
     all_excel_files = []
+    # 제외할 키워드가 파일명에 포함된 경우 수집 단계에서 제외
+    EXCLUDE_KEYWORDS = ['OLD', 'old', '삭제']
+
     for root, dirs, files in os.walk(raw_data_folder):
         for file in files:
             if file.endswith('.xlsx') and not file.startswith('~$'):
+                if any(keyword in file for keyword in EXCLUDE_KEYWORDS):
+                    print(f"제외 (키워드 필터): {file}")
+                    continue
                 all_excel_files.append(os.path.join(root, file))
 
     print(f"총 {len(all_excel_files)}개의 엑셀 파일을 발견했습니다.")
@@ -273,6 +293,7 @@ def process_and_save_checklists(data_root, csv_folder):
 
                 if full_guide:
                     all_extracted_data.append({
+                        "No": no_val,
                         "Title": csv_file.replace('.csv', ''),
                         "Item": full_item_text,
                         "Guide": full_guide,
@@ -296,7 +317,7 @@ def process_and_save_checklists(data_root, csv_folder):
     os.makedirs(result_folder, exist_ok=True)
 
     output_path = os.path.join(result_folder, semi_file_name)
-    result_df[["Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
+    result_df[["No", "Title", "Item", "Guide", "Reason"]].to_excel(output_path, index=False, engine='openpyxl')
     print(f"1차 중간 데이터 저장 완료: {output_path} (총 {len(result_df)}행)")
     return semi_file_name
 
