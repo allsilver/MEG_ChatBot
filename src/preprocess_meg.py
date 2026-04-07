@@ -61,13 +61,14 @@ def save_error_log(error_folder, step_name, failed_files):
     print(f"에러 로그 저장: {error_log_path}")
 
 
-def run_2nd_preprocessing(data_root, input_file_name):
+def run_2nd_preprocessing(data_root, db_key, input_file_name):
     """
     1차 저장된 semi 파일을 불러와 Title을 정제하고 final 결과물로 저장
     """
-    input_path  = os.path.join(data_root, 'result', input_file_name)
-    output_path = os.path.join(data_root, 'result', 'preprocessed_data_final.xlsx')
-    error_folder = os.path.join(data_root, 'error')
+    result_folder = os.path.join(data_root, 'result', db_key)
+    input_path    = os.path.join(result_folder, input_file_name)
+    output_path   = os.path.join(result_folder, 'preprocessed_data_final.xlsx')
+    error_folder  = os.path.join(data_root, 'error')
 
     if not os.path.exists(input_path):
         print(f"원본 파일을 찾을 수 없습니다: {input_path}")
@@ -94,9 +95,9 @@ def run_2nd_preprocessing(data_root, input_file_name):
 
 # --- [메인 로직] ---
 
-def convert_all_excel_to_csv(data_root):
-    raw_data_folder   = os.path.join(data_root, 'raw_data')
-    csv_output_folder = os.path.join(data_root, 'converted_csv')
+def convert_all_excel_to_csv(data_root, db_key):
+    raw_data_folder   = os.path.join(data_root, 'raw_data', db_key)
+    csv_output_folder = os.path.join(data_root, 'converted_csv', db_key)
     error_folder      = os.path.join(data_root, 'error')
 
     os.makedirs(csv_output_folder, exist_ok=True)
@@ -214,7 +215,7 @@ def convert_all_excel_to_csv(data_root):
     return csv_output_folder
 
 
-def process_and_save_checklists(data_root, csv_folder):
+def process_and_save_checklists(data_root, db_key, csv_folder):
     csv_files      = [f for f in os.listdir(csv_folder) if f.endswith('.csv')]
     error_folder   = os.path.join(data_root, 'error')
     all_extracted_data = []
@@ -313,7 +314,7 @@ def process_and_save_checklists(data_root, csv_folder):
         return None
 
     result_df     = pd.DataFrame(all_extracted_data)
-    result_folder = os.path.join(data_root, 'result')
+    result_folder = os.path.join(data_root, 'result', db_key)
     os.makedirs(result_folder, exist_ok=True)
 
     output_path = os.path.join(result_folder, semi_file_name)
