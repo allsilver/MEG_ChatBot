@@ -1,0 +1,26 @@
+{
+  "mobile": {
+    "display_name": "Mobile",
+    "description": "SEC Mobile 설계수순서"
+  },
+  "folderable": {
+    "display_name": "폴더블 특화구조",
+    "description": "SEC 폴더블 특화구조 설계수순서"
+  },
+  "water_proof": {
+    "display_name": "방수 특화구조",
+    "description": "SEC 방수 특화구조 설계수순서"
+  },
+  "wearable": {
+    "display_name": "응용제품 특화구조",
+    "description": "SEC 응용제품 특화구조 설계수순서"
+  },
+  "package": {
+    "display_name": "패키지 특화구조",
+    "description": "SEC 패키지 특화구조 설계수순서"
+  },
+  "PC": {
+    "display_name": "PC 설계 특화구조",
+    "description": "SEC PC 설계 특화구조 설계수순서"
+  }
+}
