@@ -1,14 +1,8 @@
+import os
 import requests
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-
-# ============ 생성 모델 설정 (여기만 변경) ============
-GENERATOR_MODEL = "qwen3:8b"
-# GENERATOR_MODEL = "gemma2"
-# GENERATOR_MODEL = "gemma4:e4b"
-# GENERATOR_MODEL = "qwen3:14b"
-# =====================================================
 
 # 대화 중 문맥으로 포함할 최근 턴 수 (1턴 = 질문 1개 + 답변 1개)
 CHAT_HISTORY_TURNS = 3
@@ -20,6 +14,19 @@ def check_ollama():
         return response.status_code == 200
     except Exception:
         return False
+
+
+def _load_prompt_template(prompt_file: str) -> str:
+    """src/prompts/ 폴더에서 프롬프트 텍스트 파일을 읽어 반환"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_path = os.path.join(current_dir, "prompts", prompt_file)
+    if not os.path.exists(prompt_path):
+        raise FileNotFoundError(
+            f"프롬프트 파일을 찾을 수 없습니다: {prompt_path}\n"
+            f"src/prompts/{prompt_file} 파일이 있는지 확인해주세요."
+        )
+    with open(prompt_path, encoding="utf-8") as f:
+        return f.read()
 
 
 def _search_docs(vector_dbs: dict, query: str):
@@ -47,7 +54,6 @@ def _format_history(chat_history: list[dict]) -> str:
     """
     if not chat_history:
         return ""
-    # 최근 N턴 = 최근 N*2개 메시지
     recent = chat_history[-(CHAT_HISTORY_TURNS * 2):]
     lines  = []
     for m in recent:
@@ -56,57 +62,27 @@ def _format_history(chat_history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def setup_design_bot(vector_dbs, use_think: bool = False):
+def setup_design_bot(vector_dbs, domain_config: dict, use_think: bool = False):
     """
     RAG 챗봇 핸들러 반환.
 
-    vector_dbs: dict[str, Chroma] — {db_key: vector_db}
-                단일 Chroma 객체도 하위 호환으로 수용 (dict로 래핑)
-    use_think : Thinking 모드 여부
+    vector_dbs   : dict[str, Chroma] — {db_key: vector_db}
+                   단일 Chroma 객체도 하위 호환으로 수용 (dict로 래핑)
+    domain_config: domain_registry.json 의 해당 분야 설정 dict
+    use_think    : Thinking 모드 여부 (allow_think_toggle=True 인 분야만 의미 있음)
     """
     if not isinstance(vector_dbs, dict):
         vector_dbs = {"default": vector_dbs}
 
-    llm = OllamaLLM(model=GENERATOR_MODEL, temperature=0.1)
+    model_name  = domain_config.get("model", "qwen3:8b")
+    prompt_file = domain_config.get("prompt_file", "concise.txt")
 
-    no_think_prefix = "" if use_think else "/no_think\n"
-    template = no_think_prefix + \
-"""너는 기구 설계 표준 검색 어시스턴트야. NX 작업 중인 설계자를 위해 빠르고 정확한 답변을 제공한다.
+    llm = OllamaLLM(model=model_name, temperature=0.1)
 
-[케이스별 답변 형식]
-
-케이스 1 — 표준이 명확히 검색된 경우:
-항목과 수치를 아래 형식으로 나열하라.
-  · [항목명] 수치/조건
-  · [항목명] 수치/조건
-필요한 경우 한 문장 이내로 주의사항을 추가한다.
-
-케이스 2 — 질문이 애매하거나 범위가 넓은 경우:
-"다음 항목들과 관련이 있습니다:"로 시작하여 관련 항목명을 나열하고,
-"어떤 항목을 확인하시겠어요?"로 마무리하라.
-
-케이스 3 — 정확한 표준은 없지만 유사 항목이 있는 경우:
-"해당 항목의 표준은 확인되지 않습니다."라고 먼저 말하고,
-"가장 유사한 항목: [항목명] — 수치/조건"으로 이어라.
-
-케이스 4 — 완전히 관련 없는 경우:
-"관련 표준을 찾지 못했습니다. 질문을 다시 입력해주세요."
-
-[공통 규칙]
-- 수치와 단위(mm, T, °C 등)는 절대 생략하지 않는다.
-- 마크다운 기호(##, ---, *, 백틱 등), 인사말, 서두 없이 바로 본문만 출력한다.
-- [이전 대화]가 있으면 문맥을 파악해 답변에 활용하라. 없으면 무시하라.
-
-[이전 대화]
-{chat_history}
-
-[참조 데이터]
-{context}
-
-질문: {question}
-답변:"""
-
-    prompt = ChatPromptTemplate.from_template(template)
+    # /no_think 접두사: thinking 모드 비활성화 시 삽입
+    no_think_prefix  = "" if use_think else "/no_think\n"
+    prompt_template  = no_think_prefix + _load_prompt_template(prompt_file)
+    prompt           = ChatPromptTemplate.from_template(prompt_template)
 
     def rag_handler(query: str, chat_history: list[dict] = None) -> str:
         docs         = _search_docs(vector_dbs, query)
@@ -140,7 +116,6 @@ def setup_design_bot(vector_dbs, use_think: bool = False):
 
 # --- 터미널 테스트 모드 ---
 if __name__ == "__main__":
-    import os
     import sys
     import json
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -155,34 +130,59 @@ if __name__ == "__main__":
         exit(1)
     print("✅ Ollama 연결 확인")
 
-    registry_path = os.path.join(current_dir, 'db_registry.json')
+    # domain_registry 로드
+    domain_registry_path = os.path.join(current_dir, 'domain_registry.json')
     try:
-        with open(registry_path, encoding='utf-8') as f:
-            registry = json.load(f)
+        with open(domain_registry_path, encoding='utf-8') as f:
+            domain_registry = json.load(f)
+    except FileNotFoundError:
+        print("❌ domain_registry.json 을 찾을 수 없습니다.")
+        exit(1)
+
+    # db_registry 로드
+    db_registry_path = os.path.join(current_dir, 'db_registry.json')
+    try:
+        with open(db_registry_path, encoding='utf-8') as f:
+            db_registry = json.load(f)
     except FileNotFoundError:
         print("❌ db_registry.json 을 찾을 수 없습니다.")
         exit(1)
 
-    print("\n등록된 DB 목록:")
-    for key, info in registry.items():
-        print(f"  [{key}] {info['display_name']}")
+    print("\n등록된 분야 목록:")
+    for key, info in domain_registry.items():
+        print(f"  [{key}] {info['display_name']} — 모델: {info['model']}")
 
-    keys_input = input("\n검색할 DB 키 (쉼표 구분): ").strip()
-    selected   = [k.strip() for k in keys_input.split(",") if k.strip() in registry]
-    if not selected:
-        print("❌ 유효한 DB 키가 없습니다.")
+    domain_key = input("\n사용할 분야 키를 입력하세요: ").strip()
+    if domain_key not in domain_registry:
+        print(f"❌ '{domain_key}' 는 등록된 분야가 아닙니다.")
         exit(1)
+
+    domain_config = domain_registry[domain_key]
+    default_dbs   = domain_config.get("db_keys", [])
+    available_dbs = [k for k in default_dbs if k in db_registry]
+
+    print(f"\n[{domain_config['display_name']}] 기본 DB 목록: {available_dbs}")
+    keys_input = input("검색할 DB 키 (Enter = 전체 사용): ").strip()
+    if keys_input:
+        selected = [k.strip() for k in keys_input.split(",") if k.strip() in db_registry]
+    else:
+        selected = available_dbs
 
     vector_dbs = load_multiple_vector_dbs(selected)
     if not vector_dbs:
         print("❌ 로드된 DB 가 없습니다.")
         exit(1)
 
-    answer    = input("\nThinking 모드를 사용할까요? (y/n, 기본값 n): ").strip().lower()
-    use_think = (answer == 'y')
-    print(f"✅ {'Thinking 모드' if use_think else '빠른 응답 모드 (no_think)'} 선택됨")
+    use_think = False
+    if domain_config.get("allow_think_toggle", False):
+        answer    = input("\nThinking 모드를 사용할까요? (y/n, 기본값 n): ").strip().lower()
+        use_think = (answer == 'y')
+    else:
+        use_think = domain_config.get("default_use_think", False)
 
-    bot = setup_design_bot(vector_dbs, use_think=use_think)
+    print(f"✅ 모델: {domain_config['model']} / {'Thinking 모드' if use_think else 'no_think 모드'}")
+
+    bot = setup_design_bot(vector_dbs, domain_config, use_think=use_think)
     print("✅ 준비 완료. 질문을 입력하세요. (종료: q)\n")
 
     history = []
@@ -197,5 +197,5 @@ if __name__ == "__main__":
         answer = bot(query, chat_history=history)
         print(answer)
         print("─" * 50 + "\n")
-        history.append({"role": "user",      "content": query})
-        history.append({"role": "assistant",  "content": answer})
+        history.append({"role": "user",     "content": query})
+        history.append({"role": "assistant", "content": answer})

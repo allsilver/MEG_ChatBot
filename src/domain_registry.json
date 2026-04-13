@@ -1,0 +1,26 @@
+{
+  "MEG_STANDARD": {
+    "display_name": "설계수순서",
+    "description": "기구 설계 표준 체크리스트 검색",
+    "model": "qwen3:8b",
+    "prompt_file": "MEG_STANDARD.txt",
+    "allow_think_toggle": false,
+    "default_use_think": false
+  },
+  "DFC": {
+    "display_name": "DFC",
+    "description": "Design For Cost 가이드라인",
+    "model": "qwen3:14b",
+    "prompt_file": "DFC.txt",
+    "allow_think_toggle": true,
+    "default_use_think": true
+  },
+  "MECHA": {
+    "display_name": "공정 표준",
+    "description": "공정 설계 표준 검색",
+    "model": "qwen3:8b",
+    "prompt_file": "MECHA.txt",
+    "allow_think_toggle": false,
+    "default_use_think": false
+  }
+}
